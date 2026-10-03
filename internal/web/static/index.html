@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Desktop Mirror</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="stage" hidden>
+  <video id="remote" autoplay playsinline muted></video>
+  <video id="local" autoplay playsinline muted></video>
+  <div id="toolbar">
+    <button id="flip" type="button">Flip camera</button>
+    <button id="stop" type="button" class="danger">Stop</button>
+  </div>
+</main>
+
+<section id="intro">
+  <h1>Desktop Mirror</h1>
+  <p id="message">Share this phone's camera with your computer and see the computer's camera here.</p>
+  <button id="start" type="button">Start camera</button>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>
