@@ -1,5 +1,5 @@
 // Package media holds the video frame types and codec interfaces shared by
-// the camera, WebRTC and UI layers. It has no Qt or cgo dependency.
+// the camera, WebRTC and UI layers. It has no UI or cgo dependency.
 package media
 
 import (

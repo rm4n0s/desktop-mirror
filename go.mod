@@ -1,20 +1,24 @@
 module github.com/rm4n0s/desktop-mirror
 
-go 1.26.8
+go 1.27
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/mappu/miqt v0.14.0
 	github.com/pion/ice/v4 v4.4.5
 	github.com/pion/interceptor v0.1.49
 	github.com/pion/rtcp v1.2.18
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.22
 	github.com/rm4n0s/errors v0.0.0-20260824195921-8423e20ff67e
+	github.com/rm4n0s/glutter v1.1.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	golang.org/x/sys v0.49.0
 )
 
 require (
+	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/go-text/typesetting v0.3.4 // indirect
+	github.com/godbus/dbus/v5 v5.2.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
 	github.com/pion/dtls/v3 v3.1.9 // indirect
@@ -29,7 +33,8 @@ require (
 	github.com/pion/turn/v5 v5.1.2 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )

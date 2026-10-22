@@ -1,149 +1,109 @@
-// Package camera captures frames from the PC's cameras through Qt Multimedia.
-// All methods must be called on the Qt main thread.
+// Package camera captures frames from the PC's cameras through Video4Linux2,
+// with no cgo and no dependency beyond golang.org/x/sys. It is Linux only, like
+// the UI toolkit it feeds.
 package camera
 
 import (
-	"bytes"
+	"context"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
+	"time"
 	"unsafe"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/multimedia"
 	"github.com/rm4n0s/errors"
-
-	"github.com/rm4n0s/desktop-mirror/internal/media"
-	"github.com/rm4n0s/desktop-mirror/internal/qtutil"
+	"golang.org/x/sys/unix"
 )
 
 // Device is a camera the user can pick.
 type Device struct {
-	ID          []byte
+	// ID is the device node, e.g. /dev/video0.
+	ID          string
 	Description string
 }
 
-// Devices lists the available video inputs.
-func Devices() []Device {
+// devicePattern matches the nodes a camera can show up as.
+const devicePattern = "/dev/video*"
+
+// Devices lists the available video capture devices, in device order. Nodes
+// that cannot capture video (a camera's metadata node, output devices) are
+// left out, and so are nodes that cannot be opened at all.
+func Devices(ctx context.Context) ([]Device, error) {
+	paths, err := filepath.Glob(devicePattern)
+	if err != nil {
+		return nil, errors.NewErr("ListCamerasFailed", err)
+	}
+	sort.Slice(paths, func(i, j int) bool { return deviceLess(paths[i], paths[j]) })
+
 	var devices []Device
-	qtutil.WithGCPaused(func() {
-		inputs := multimedia.QMediaDevices_VideoInputs()
-		devices = make([]Device, 0, len(inputs))
-		for i := range inputs {
-			devices = append(devices, Device{ID: inputs[i].Id(), Description: inputs[i].Description()})
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, errors.NewErr("ListCamerasCancelled", err)
 		}
-	})
-	return devices
-}
-
-// Capture runs one camera at a time and delivers its frames.
-type Capture struct {
-	session *multimedia.QMediaCaptureSession
-	sink    *multimedia.QVideoSink
-	cam     *multimedia.QCamera
-
-	onFrame func(*qt.QImage)
-	onError func(error)
-}
-
-// New creates an idle Capture.
-func New() *Capture {
-	c := &Capture{
-		session: multimedia.NewQMediaCaptureSession(),
-		sink:    multimedia.NewQVideoSink(),
-	}
-	c.session.SetVideoSink(c.sink)
-	c.sink.OnVideoFrameChanged(c.handleFrame)
-	return c
-}
-
-// OnFrame sets the frame handler. The handler owns the *QImage (RGBA8888)
-// and must free it with qtutil.Release.
-func (c *Capture) OnFrame(fn func(*qt.QImage)) { c.onFrame = fn }
-
-// OnError sets the handler for camera failures that happen after Start.
-func (c *Capture) OnError(fn func(error)) { c.onError = fn }
-
-// Start switches to the camera with the given id, stopping the current one.
-func (c *Capture) Start(id []byte) error {
-	c.Stop()
-	var cam *multimedia.QCamera
-	qtutil.WithGCPaused(func() {
-		inputs := multimedia.QMediaDevices_VideoInputs()
-		for i := range inputs {
-			if bytes.Equal(inputs[i].Id(), id) {
-				cam = multimedia.NewQCamera2(&inputs[i]) // QCamera keeps its own copy
-				formats := inputs[i].VideoFormats()
-				infos := make([]FormatInfo, len(formats))
-				for j := range formats {
-					size := formats[j].Resolution()
-					infos[j] = FormatInfo{Width: size.Width(), Height: size.Height(), MaxFPS: float64(formats[j].MaxFrameRate())}
-				}
-				if best := BestFormat(infos); best >= 0 {
-					cam.SetCameraFormat(&formats[best])
-				}
-				return
-			}
+		if d, ok := probe(path); ok {
+			devices = append(devices, d)
 		}
-	})
-	if cam == nil {
-		return errors.New("CameraNotFound", "the selected camera is no longer available", "id", string(id))
 	}
-	cam.OnErrorOccurred(func(_ multimedia.QCamera__Error, msg string) {
-		if c.onError != nil {
-			c.onError(errors.New("CameraFailed", msg))
+	return devices, nil
+}
+
+// deviceLess orders video10 after video2.
+func deviceLess(a, b string) bool {
+	if len(a) != len(b) {
+		return len(a) < len(b)
+	}
+	return a < b
+}
+
+// probe reports the capture device at path, if it is one.
+func probe(path string) (Device, bool) {
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return Device{}, false
+	}
+	defer unix.Close(fd) //nolint:errcheck // nothing to do when closing a probe fails
+
+	var caps v4l2Capability
+	if ioctl(fd, vidiocQueryCap, unsafe.Pointer(&caps)) != nil {
+		return Device{}, false
+	}
+	flags := caps.Capabilities
+	if flags&capDeviceCaps != 0 {
+		flags = caps.DeviceCaps
+	}
+	if flags&capVideoCapture == 0 || flags&capStreaming == 0 {
+		return Device{}, false
+	}
+	name := strings.TrimSpace(cString(caps.Card[:]))
+	if name == "" {
+		name = filepath.Base(path)
+	}
+	return Device{ID: path, Description: name}, true
+}
+
+// Watch calls onChange with the device list now and each time it changes, until
+// ctx ends. Cameras can be plugged in or removed at any time, and the kernel
+// offers no portable notification for it, so the list is polled. It blocks;
+// onChange runs on the calling goroutine.
+func Watch(ctx context.Context, interval time.Duration, onChange func([]Device)) {
+	var last []Device
+	first := true
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		devices, err := Devices(ctx)
+		if err == nil && (first || !slices.Equal(devices, last)) {
+			first = false
+			last = devices
+			onChange(devices)
 		}
-	})
-	c.cam = cam
-	c.session.SetCamera(cam)
-	cam.Start()
-	return nil
-}
-
-// Stop stops the current camera, if any.
-func (c *Capture) Stop() {
-	if c.cam == nil {
-		return
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
-	c.cam.Stop()
-	c.session.SetCamera(nil)
-	c.cam.Delete()
-	c.cam = nil
-}
-
-func (c *Capture) handleFrame(frame *multimedia.QVideoFrame) {
-	if c.onFrame == nil || !frame.IsValid() {
-		return
-	}
-	img := frame.ToImage()
-	if img == nil {
-		return
-	}
-	if img.IsNull() {
-		qtutil.Release(img)
-		return
-	}
-	rgba := img.ConvertToFormat(qt.QImage__Format_RGBA8888)
-	qtutil.Release(img)
-	if rgba == nil || rgba.IsNull() {
-		return
-	}
-	c.onFrame(rgba)
-}
-
-// ToRGBA copies a QImage in RGBA8888 format into a Go-owned frame.
-func ToRGBA(img *qt.QImage) (media.RGBAFrame, error) {
-	if img.Format() != qt.QImage__Format_RGBA8888 {
-		return media.RGBAFrame{}, errors.New("InvalidFrameFormat", "expected an RGBA8888 image", "format", int(img.Format()))
-	}
-	w, h := img.Width(), img.Height()
-	stride := int(img.BytesPerLine())
-	if w <= 0 || h <= 0 || stride < w*4 {
-		return media.RGBAFrame{}, errors.New("InvalidFrameSize", "image has invalid dimensions", "width", w, "height", h)
-	}
-	src := unsafe.Slice(img.ConstBits(), stride*h)
-	dst := media.RGBAFrame{Width: w, Height: h, Data: make([]byte, w*h*4)}
-	for row := 0; row < h; row++ {
-		copy(dst.Data[row*w*4:(row+1)*w*4], src[row*stride:row*stride+w*4])
-	}
-	return dst, nil
 }
 
 // TargetWidth and TargetHeight are the capture size the camera is asked for:
@@ -162,7 +122,7 @@ type FormatInfo struct {
 
 // BestFormat returns the index of the mode closest to 1280x720 that can reach
 // about 30 fps, or -1 when there are no modes. Modes that are too slow only win
-// when nothing faster exists.
+// when nothing faster exists. Of equally good modes the first wins.
 func BestFormat(formats []FormatInfo) int {
 	best, bestScore := -1, 0
 	for i, f := range formats {

@@ -10,13 +10,12 @@ The app serves the phone page itself over HTTPS on your LAN, so both devices mus
 
 ## Install the build dependencies
 
-You need Go, a C++ toolchain, `pkg-config`, Qt 6 development files (including Multimedia), and FFmpeg development files (`libavcodec`, `libavutil`) from an FFmpeg built with libvpx, which provides the VP8 encoder.
+You need Go 1.27 or newer, a C toolchain, `pkg-config`, and FFmpeg development files (`libavcodec`, `libavutil`) from an FFmpeg built with libvpx, which provides the VP8 encoder. The UI ([glutter](https://github.com/rm4n0s/glutter)) and the camera capture (Video4Linux2) are pure Go and need no development files, but they need a Wayland or X11 session with OpenGL ES 3.0 or Vulkan at run time, and a camera that Linux exposes as `/dev/video*`.
 
 **Fedora** (the package set the project is developed against):
 
 ```
-sudo dnf install golang gcc-c++ pkgconf-pkg-config mesa-libGL-devel \
-    qt6-qtbase-devel qt6-qtmultimedia-devel \
+sudo dnf install golang gcc pkgconf-pkg-config \
     libavcodec-free-devel libavutil-free-devel libvpx
 ```
 
@@ -24,8 +23,7 @@ sudo dnf install golang gcc-c++ pkgconf-pkg-config mesa-libGL-devel \
 
 ```
 sudo apt update
-sudo apt install golang-go build-essential pkg-config libgl1-mesa-dev \
-    qt6-base-dev qt6-multimedia-dev \
+sudo apt install golang-go build-essential pkg-config \
     libavcodec-dev libavutil-dev libvpx-dev
 ```
 
@@ -33,13 +31,12 @@ sudo apt install golang-go build-essential pkg-config libgl1-mesa-dev \
 
 ```
 sudo pacman -S go base-devel pkgconf \
-    qt6-base qt6-multimedia \
     ffmpeg libvpx
 ```
 
-On Arch the `ffmpeg` package already includes the development headers and `libvpx` support. `go.mod` requires Go 1.26.8. If your distribution's `go` package is older, Go can download the right toolchain itself (`GOTOOLCHAIN=auto`, the default from Go 1.21), or you can install Go from [go.dev/dl](https://go.dev/dl/).
+On Arch the `ffmpeg` package already includes the development headers and `libvpx` support. `go.mod` requires Go 1.27. If your distribution's `go` package is older, Go can download the right toolchain itself (`GOTOOLCHAIN=auto`, the default from Go 1.21), or you can install Go from [go.dev/dl](https://go.dev/dl/).
 
-To check that the libraries are found: `pkg-config --modversion Qt6Multimedia libavcodec`. To check the VP8 encoder: `ffmpeg -hide_banner -encoders | grep libvpx`.
+To check that the libraries are found: `pkg-config --modversion libavcodec`. To check the VP8 encoder: `ffmpeg -hide_banner -encoders | grep libvpx`.
 
 ## Build and run
 
@@ -47,8 +44,6 @@ To check that the libraries are found: `pkg-config --modversion Qt6Multimedia li
 go build -o desktop-mirror ./cmd/desktop-mirror
 ./desktop-mirror
 ```
-
-The first build compiles miqt's Qt bindings and takes around 10 minutes; later builds are fast.
 
 Flags: `-port` (default 8443), `-udp-min`/`-udp-max` (restrict the WebRTC media ports so a firewall rule can be written), `-stun`, `-config-dir`. Allow the HTTPS port and the UDP range through your firewall if the phone cannot connect.
 
@@ -58,4 +53,4 @@ Flags: `-port` (default 8443), `-udp-min`/`-udp-max` (restrict the WebRTC media 
 go test -race ./...
 ```
 
-Tests for everything except the Qt code need neither Qt nor a camera. The camera test skips when there is no camera. See [docs/SPEC.md](docs/SPEC.md) for the design.
+The tests need neither a display nor a camera: the UI tests run on glutter's fake platform, and the camera test skips when there is no camera. See [docs/SPEC.md](docs/SPEC.md) for the design.

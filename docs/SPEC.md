@@ -4,7 +4,7 @@ Status: implemented (milestones M0-M5 below, minus the items under "Not done yet
 
 ## 1. Goal
 
-A Go desktop app (Qt via [miqt](https://github.com/mappu/miqt)) and a small website that mirror cameras between a PC and a phone over WebRTC:
+A Go desktop app (UI via [glutter](https://github.com/rm4n0s/glutter)) and a small website that mirror cameras between a PC and a phone over WebRTC:
 
 - **Phone → PC**: the phone's camera feed is shown in the desktop app.
 - **PC → phone**: the PC's camera feed is shown in the phone's browser, on the website.
@@ -56,15 +56,15 @@ type Decoder interface {
 ```
 
 - **Default codec: VP8.** Royalty-free, BSD-licensed (libvpx), supported by Chrome, Firefox and Safari. H.264 is a possible later addition for hardware acceleration, but avoid GPL-only builds (x264) so the project's license stays unconstrained.
-- Rejected: embedding QtWebEngine and letting Chromium do WebRTC. It makes codecs free but is a heavy dependency, hides the video behind a web view instead of Qt widgets, and complicates camera selection.
+- Rejected: embedding QtWebEngine and letting Chromium do WebRTC. It makes codecs free but is a heavy dependency, hides the video behind a web view instead of native widgets, and complicates camera selection.
 
-### 2.4 Camera capture and display use Qt Multimedia
+### 2.4 Camera capture is Video4Linux2; display is a glutter image
 
-- Camera enumeration: `QMediaDevices` (video inputs).
-- Capture: `QCamera` + `QMediaCaptureSession` + `QVideoSink`. Each `videoFrameChanged` frame is converted to I420 and handed to the encoder.
-- Display (both the local preview and the phone feed): a widget showing `QImage` frames.
+- Camera enumeration: the `/dev/video*` nodes that report video capture and streaming in `VIDIOC_QUERYCAP`, polled for hot-plug.
+- Capture: `internal/camera` talks to V4L2 itself (ioctls through `golang.org/x/sys/unix`, mmap'd buffers, `poll`), with no cgo. It asks for the mode closest to 1280x720 at about 30 fps in YUYV or MJPEG and converts each frame to RGBA, which is converted to I420 for the encoder.
+- Display (both the local preview and the phone feed): a glutter `RawImage` made from each RGBA frame with `ui.DecodeImageFromPixels`.
 
-The miqt README lists QtMultimedia and QtMultimediaWidgets as bound. Whether the pixel-level API (`QVideoFrame` map/`toImage`) is usable from Go has **not** been verified; milestone M1 is a spike for exactly this (see section 9).
+glutter is a UI toolkit and has no camera API, which is why capture is written against V4L2. It is Linux only, like glutter; other platforms would need another capture backend behind the same `camera` API.
 
 ### 2.5 The desktop app is the SDP offerer
 
@@ -75,12 +75,12 @@ When the phone connects to the signaling WebSocket, the desktop creates the offe
 ```
  ┌───────────────────────── desktop-mirror process ─────────────────────────┐
  │                                                                          │
- │  internal/ui (miqt)          internal/app (session state machine)        │
- │  ├ MainWindow  ◄──state/frames──┤                                        │
- │  ├ VideoView                    ├──► internal/signaling (HTTPS + WS)  ◄──┼── phone browser (web/)
- │  └ QRView                       │        └ token manager, TLS cert       │      │
+ │  internal/ui (glutter)       internal/app (session state machine)        │
+ │  ├ HomePage    ◄──state/frames──┤                                        │
+ │  ├ video views                  ├──► internal/signaling (HTTPS + WS)  ◄──┼── phone browser (web/)
+ │  └ QR view                      │        └ token manager, TLS cert       │      │
  │                                 └──► internal/rtc (pion PeerConnection) ◄┼──────┘ WebRTC (SRTP/UDP, LAN)
- │  internal/camera (miqt)  ──frames──►     │          │                    │
+ │  internal/camera (V4L2)  ──frames──►     │          │                    │
  │                                    internal/media (Encoder/Decoder,      │
  │                                    I420/RGBA conversion; ffmpeg impl)    │
  └──────────────────────────────────────────────────────────────────────────┘
@@ -90,12 +90,12 @@ When the phone connects to the signaling WebSocket, the desktop creates the offe
 
 Follows the repo conventions (`cmd/<app>`, `internal/`, tests beside code):
 
-| Path | Responsibility | Imports miqt? |
+| Path | Responsibility | Imports glutter? |
 |---|---|---|
 | `cmd/desktop-mirror/` | Thin `main.go`: build dependencies, start the app | no |
 | `internal/app/` | Session state machine; wires camera, rtc, signaling, and UI | no |
-| `internal/ui/` | Main window, video view, QR view (miqt widgets) | **yes** |
-| `internal/camera/` | `QMediaDevices` listing, `QCamera` capture to frames | **yes** |
+| `internal/ui/` | Home page, video views, QR view, and the controller that connects them to the camera and session (glutter widgets) | **yes** |
+| `internal/camera/` | V4L2 device listing and capture to RGBA frames | no |
 | `internal/media/` | `I420Frame`, `Encoder`/`Decoder` interfaces, colorspace helpers | no |
 | `internal/media/ffmpeg/` | libavcodec implementation of the interfaces (cgo) | no |
 | `internal/rtc/` | Pion peer wrapper: offer/answer, tracks, RTP (de)packetization, PLI/NACK | no |
@@ -104,15 +104,15 @@ Follows the repo conventions (`cmd/<app>`, `internal/`, tests beside code):
 | `internal/netutil/` | LAN interface discovery and default-interface choice | no |
 | `internal/web/` | `go:embed` of `static/` (`index.html`, `app.js`, `style.css`; vanilla JS) | no |
 
-Only `ui` and `camera` import miqt, so everything else builds and tests quickly without Qt installed (miqt's first compile takes roughly 10 minutes).
+Only `ui` imports glutter, and neither it nor `camera` needs cgo. glutter is built on purego and needs no development files; only `internal/media/ffmpeg` needs a C toolchain and FFmpeg headers.
 
 ### Threading rules
 
-miqt binds the Qt application to a fixed OS thread, so Qt objects must only be touched there. From any other goroutine use `qt6/mainthread` (`Start`/`Wait`).
+glutter runs the widget tree on the UI thread (the main goroutine). `State.SetState` is safe from any goroutine: elsewhere it posts the change to the UI thread. The home page hands its host an `update` function that wraps it, and all the view model is changed through that.
 
-- **Capture path** (Qt thread to Go): the `videoFrameChanged` handler copies/converts the frame to I420 immediately and does a non-blocking send into a size-1 channel (drop the stale frame; never block the Qt thread). A worker goroutine encodes and writes RTP.
-- **Display path** (Go to Qt thread): the decoder goroutine stores the latest RGBA frame in an atomic slot and schedules at most one pending `mainthread.Start` to paint it. The `QImage` is created on the Qt thread from a copy, since the Go buffer is reused.
-- Pion callbacks run on pion goroutines and never touch Qt directly.
+- **Capture path** (capture goroutine to Go): `camera.Capture` converts each frame to RGBA on its own goroutine and calls the frame handler, which pushes it to the session (`PushFrame` never blocks and replaces an unsent frame) and offers it to the preview.
+- **Display path** (any goroutine to the UI thread): a `frameSink` keeps only the newest frame in an atomic slot and queues at most one pending `update` to show it. The `ui.Image` is made on the UI thread from the frame, which is never mutated after it is delivered.
+- Pion callbacks run on pion goroutines and never touch the widgets directly.
 
 ## 4. Session lifecycle
 
@@ -161,10 +161,10 @@ Pairing security:
 
 Single main window:
 
-- **Left panel**: camera selector (`QComboBox` from `QMediaDevices.VideoInputs`, refreshed on `videoInputsChanged`), network interface selector (shown only when more than one LAN interface exists), local preview, QR code image, the URL as selectable text with a Copy button, "New QR code" button, status label (`Waiting for phone` / `Connecting` / `Connected: <user agent>` / `Disconnected`), Disconnect button.
-- **Center**: the phone feed (`VideoView`), with a placeholder until the first frame.
+- **Left panel**: camera selector (a drop-down over `camera.Devices`, refreshed when cameras are plugged or unplugged), network interface selector (shown only when more than one LAN interface exists), local preview, QR code image, the URL as selectable text with a Copy button, "New QR code" button, status label (`Waiting for phone` / `Connecting` / `Connected: <user agent>` / `Disconnected`), Disconnect button.
+- **Center**: the phone feed, with a placeholder until the first frame.
 - Changing the camera while connected swaps the capture source without ending the session. Changing the network interface restarts the server, rotates the token, and regenerates the QR code.
-- The QR code is rendered with a QR library and painted into a `QImage` at a fixed module size with a quiet zone, so it scans reliably at any window size.
+- The QR code is rendered with a QR library and drawn as an image with a whole number of pixels per module and a quiet zone, so it scans reliably at any window size.
 
 ## 8. Error handling and testing
 
@@ -186,17 +186,17 @@ Tests (table-driven, next to the code):
 
 - **Unit**: token manager (expiry, single use, rotation), message parsing, cert SANs, interface selection, session state machine against a fake peer and fake signaling.
 - **Integration (no Qt, no ffmpeg)**: a test "phone" built with pion connects to the real signaling server over loopback, answers the offer, and exchanges frames through stub passthrough `Encoder`/`Decoder` implementations. This covers the signaling protocol, negotiation, RTP flow, and teardown/re-pairing.
-- **UI smoke**: construct the main window with `QT_QPA_PLATFORM=offscreen` and drive state events.
+- **UI smoke**: pump the home page in `gluttertest` (a fake platform and software renderer, no display needed) against a fake host, and drive state events.
 - **Manual checklist** (cannot be automated): Chrome on Android and Safari on iOS; cert warning flow; front/back camera switch; phone rotation; unplugging the PC camera; Wi-Fi drop and re-pair; Linux first, then Windows/macOS.
 
-CI (GitHub Actions) installs Qt 6 dev packages (with Multimedia) and FFmpeg dev packages, and caches `GOCACHE` because the first miqt build is slow. The Qt-free packages are tested in a fast job that needs neither.
+CI (GitHub Actions) needs the FFmpeg dev packages for `internal/media/ffmpeg`; the UI tests need no display and the camera test skips without a camera.
 
 ## 9. Milestones
 
 | # | Deliverable | Notes |
 |---|---|---|
 | M0 | Go module, package skeleton, CI, lint config | Module path assumed `github.com/rm4n0s/desktop-mirror` |
-| M1 | Qt window with camera selector and live local preview | **Spike**: confirm `QVideoSink`/`QVideoFrame` pixel access and `QImage` display from miqt |
+| M1 | Window with camera selector and live local preview | Camera capture through V4L2; display through glutter's `RawImage` |
 | M2 | HTTPS + WebSocket server, cert, token, embedded page, QR code in the UI | No media yet; the phone can open the page and reach `hello` |
 | M3 | Pion negotiation and phone → desktop video | Needs the ffmpeg decoder |
 | M4 | Desktop → phone video | Needs the ffmpeg encoder, PLI handling |
@@ -207,7 +207,7 @@ CI (GitHub Actions) installs Qt 6 dev packages (with Multimedia) and FFmpeg dev 
 Decisions needed from you:
 
 1. **New dependencies** (`CLAUDE.md` says to ask first). Proposed:
-   - `github.com/mappu/miqt` (required by you)
+   - `github.com/rm4n0s/glutter` (required by you; replaced miqt)
    - `github.com/pion/webrtc/v4` (also pulls in `pion/interceptor`, `pion/rtp`)
    - `github.com/coder/websocket` (context-aware, actively maintained; `gorilla/websocket` is archived)
    - `github.com/skip2/go-qrcode`
@@ -219,7 +219,7 @@ Decisions needed from you:
 
 Risks:
 
-- miqt's Qt Multimedia coverage for raw frame access is unverified (mitigated by the M1 spike; the fallback is capturing through V4L2/another Go library on Linux).
+- Camera capture is Linux only (V4L2), and glutter is Linux first; Windows and macOS would need a capture backend and a glutter port.
 - The self-signed certificate warning is a real friction point on iOS and some Android browsers.
 - Software VP8 encoding at 720p30 uses noticeable CPU; the default resolution/bitrate may need tuning.
 - OS firewalls may block the HTTPS port or the UDP range on first run; the app should detect "phone never connected" and hint at this.
@@ -229,13 +229,13 @@ Risks:
 Differences from the first draft:
 
 - **No FFmpeg binding dependency.** `internal/media/ffmpeg` calls libavcodec directly through a small cgo layer (`pkg-config: libavcodec libavutil`), so `go-astiav` was not needed. The libvpx encoder and the built-in VP8 decoder are used. libavcodec's libvpx wrapper cannot change the rate on the fly, so `SetBitrate` restarts the encoder with a keyframe on the next frame.
-- **`internal/qtutil`** exists because of miqt's memory model: values returned by value from Qt (`ToImage`, `Copy`, `ConvertToFormat`, device lists) carry a Go finalizer that deletes the C++ object. Calling `Delete` on them double-frees, and waiting for the finalizer lets frame buffers pile up because the Go GC cannot see C++ memory. `qtutil.Release` clears the finalizer and then deletes. Device lists returned by `QMediaDevices_VideoInputs` must be read inside `qtutil.WithGCPaused`.
+- **glutter replaced miqt.** The UI moved from Qt widgets to a glutter (Flutter-style) home page, and `internal/qtutil` went with miqt's memory model. Qt Multimedia did the camera capture, and glutter has none, so `internal/camera` now talks to V4L2 directly (pure Go: ioctl numbers are derived from the struct sizes, buffers are mmap'd, `Capture.Stop` waits for the camera to be released). Cameras that deliver MJPEG without Huffman tables, which Go's `image/jpeg` rejects, are not handled; the capture reports the camera as failed after 30 bad frames in a row. The whole GUI build needs Go 1.27 (glutter's requirement) but no C++ toolchain or Qt.
 - **Camera mode selection.** The camera is asked for the mode closest to 1280x720 at about 30 fps (`camera.BestFormat`); the test webcam otherwise defaults to 2592x1944. Frames wider than 1280 pixels are also shrunk before encoding (`media.ShrinkRGBA`).
 - **Production wiring** lives in `internal/app/wiring.go` (`NewServerFactory`, `NewPeerFactory`) so the end-to-end test exercises the same code as the app. `ui.Run` builds the session; `cmd/desktop-mirror` only parses flags.
 - **Certificates** cover every LAN address, so switching interface does not force the phone to accept a new one.
 - **Loss detection** on the receive side uses RTP sequence gaps (rate limited to one keyframe request per second) plus pion's periodic PLI interceptor, rather than the sample builder's release handler, which fires for normal packets too.
 
-Test coverage: unit tests for tokens, messages, certificates, interface ranking and colour conversion; a real-codec round trip (VP8 at VGA, 720p and portrait); a pion-to-pion loopback test; a session test with fakes; an end-to-end test (real HTTPS/WebSocket server, real pion peers, stub codecs) that drives the same signaling protocol as the web page; an offscreen Qt test of the window; and a camera test that skips without hardware.
+Test coverage: unit tests for tokens, messages, certificates, interface ranking and colour conversion; a real-codec round trip (VP8 at VGA, 720p and portrait); a pion-to-pion loopback test; a session test with fakes; an end-to-end test (real HTTPS/WebSocket server, real pion peers, stub codecs) that drives the same signaling protocol as the web page; a headless test of the home page and its frame handling; V4L2 ioctl-number and colour conversion tests; and a camera test that skips without hardware.
 
 Not done yet:
 

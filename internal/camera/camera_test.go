@@ -1,67 +1,87 @@
 package camera_test
 
 import (
-	"os"
+	"context"
 	"testing"
+	"time"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/rm4n0s/errors"
 
 	"github.com/rm4n0s/desktop-mirror/internal/camera"
-	"github.com/rm4n0s/desktop-mirror/internal/qtutil"
+	"github.com/rm4n0s/desktop-mirror/internal/media"
 )
 
-// TestCaptureDeliversFrames needs a real camera and skips without one. Qt
-// objects are only touched from this goroutine, which NewQApplication pins to
-// its OS thread.
+// TestCaptureDeliversFrames needs a real camera and skips without one.
 func TestCaptureDeliversFrames(t *testing.T) {
-	t.Setenv("QT_QPA_PLATFORM", "offscreen")
-	qt.NewQApplication(append(os.Args[:1:1], "-platform", "offscreen"))
-
-	devices := camera.Devices()
+	ctx := context.Background()
+	devices, err := camera.Devices(ctx)
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
+	}
 	if len(devices) == 0 {
 		t.Skip("no camera available")
 	}
-	t.Logf("using %q", devices[0].Description)
+	t.Logf("using %q (%s)", devices[0].Description, devices[0].ID)
 
 	capture := camera.New()
-	frames := 0
-	var width, height int
-	var toRGBAErr error
-	capture.OnFrame(func(img *qt.QImage) {
-		defer qtutil.Release(img)
-		frames++
-		if frames == 5 {
-			width, height = img.Width(), img.Height()
-			_, toRGBAErr = camera.ToRGBA(img)
-		}
-		if frames == 10 {
-			qt.QCoreApplication_Quit()
+	frames := make(chan media.RGBAFrame, 16)
+	capture.OnFrame(func(f media.RGBAFrame) {
+		select {
+		case frames <- f:
+		default:
 		}
 	})
-	var captureErr error
-	capture.OnError(func(err error) { captureErr = err; qt.QCoreApplication_Quit() })
-	if err := capture.Start(devices[0].ID); err != nil {
-		t.Fatalf("Start: %v", err)
+	failed := make(chan error, 1)
+	capture.OnError(func(err error) { failed <- err })
+	if err := capture.Start(ctx, devices[0].ID); err != nil {
+		t.Skipf("camera could not be used: %v", err)
 	}
 	defer capture.Stop()
 
-	timeout := qt.NewQTimer()
-	timeout.SetSingleShot(true)
-	timeout.OnTimeout(func() { qt.QCoreApplication_Quit() })
-	timeout.Start(8000)
-	qt.QApplication_Exec()
+	timeout := time.After(8 * time.Second)
+	var last media.RGBAFrame
+	for n := 0; n < 10; n++ {
+		select {
+		case last = <-frames:
+		case err := <-failed:
+			t.Skipf("camera failed: %v", err)
+		case <-timeout:
+			t.Fatalf("received %d frames, want 10", n)
+		}
+	}
+	if last.Width <= 0 || last.Height <= 0 || len(last.Data) != last.Width*last.Height*4 {
+		t.Errorf("frame is %dx%d with %d bytes", last.Width, last.Height, len(last.Data))
+	}
+	t.Logf("%dx%d", last.Width, last.Height)
+}
 
-	if captureErr != nil {
-		t.Skipf("camera could not be used: %v", captureErr)
+func TestStartUnknownCamera(t *testing.T) {
+	err := camera.New().Start(context.Background(), "/dev/video-does-not-exist")
+	appErr, ok := errors.FromError(err)
+	if !ok {
+		t.Fatalf("expected *errors.Error, got %T (%v)", err, err)
 	}
-	if frames < 10 {
-		t.Fatalf("received %d frames, want >= 10", frames)
+	if !appErr.HasRoute("Capture.Start->openStream.CameraNotFound") {
+		t.Errorf("unexpected failure path: %s", appErr.Route())
 	}
-	if width <= 0 || height <= 0 {
-		t.Errorf("frame size %dx%d", width, height)
+}
+
+func TestDevicesCancelled(t *testing.T) {
+	devices, err := camera.Devices(context.Background())
+	if err != nil {
+		t.Fatalf("Devices: %v", err)
 	}
-	if toRGBAErr != nil {
-		t.Errorf("ToRGBA: %v", toRGBAErr)
+	if len(devices) == 0 {
+		t.Skip("no camera available to cancel the listing of")
 	}
-	t.Logf("%d frames, %dx%d", frames, width, height)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = camera.Devices(ctx)
+	appErr, ok := errors.FromError(err)
+	if !ok {
+		t.Fatalf("expected *errors.Error, got %T (%v)", err, err)
+	}
+	if !appErr.HasRoute("Devices.ListCamerasCancelled") {
+		t.Errorf("unexpected failure path: %s", appErr.Route())
+	}
 }

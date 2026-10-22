@@ -71,8 +71,7 @@ Use `github.com/rm4n0s/errors` for all errors. Never use `fmt.Errorf`, and never
 - Don't edit generated files (`*.pb.go`, `*_gen.go`); regenerate them with `make generate`
 - Don't commit secrets or `.env` files
 ## Project notes
-- Only `internal/ui` and `internal/camera` import miqt; keep new logic in Qt-free packages so it tests without Qt. Design and decisions are in `docs/SPEC.md`
-- Building needs Qt 6 (with Multimedia) and FFmpeg dev files with libvpx; the first miqt compile takes ~10 minutes
-- miqt memory: objects from `New*` constructors need `Delete()`; values returned by value (`ToImage`, `Copy`, `ConvertToFormat`, device lists) already have a finalizer. Free images with `qtutil.Release`, never `Delete()`, and read device lists inside `qtutil.WithGCPaused`
-- Qt objects may only be touched from the main thread; from other goroutines use `mainthread.Start`/`Wait`
-- Qt tests set `QT_QPA_PLATFORM=offscreen`; each test binary can create only one `QApplication`
+- Only `internal/ui` imports glutter (`github.com/rm4n0s/glutter`); keep new logic in UI-free packages so it tests without a display. Design and decisions are in `docs/SPEC.md`
+- Building needs Go 1.27 and FFmpeg dev files with libvpx (for `internal/media/ffmpeg`); glutter and `internal/camera` (V4L2) are pure Go and Linux only
+- The widget tree runs on the UI thread. `State.SetState` is safe from any goroutine; change the view model only through the `update` function the page hands its host
+- UI tests use `gluttertest` (fake platform, no display) against a fake `host`; `foundation.DebugMode` must be on, which is the default for `go test`

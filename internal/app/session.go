@@ -1,5 +1,5 @@
 // Package app holds the pairing session: it owns the signaling server and,
-// for each phone that connects, a WebRTC peer. It has no Qt dependency.
+// for each phone that connects, a WebRTC peer. It has no UI dependency.
 package app
 
 import (
