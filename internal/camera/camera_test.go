@@ -2,6 +2,8 @@ package camera_test
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,8 +13,12 @@ import (
 	"github.com/rm4n0s/desktop-mirror/internal/media"
 )
 
-// TestCaptureDeliversFrames needs a real camera and skips without one.
+// TestCaptureDeliversFrames needs a real camera and skips without one. On a Mac it turns the camera on and the system may ask
+// for the permission to use it, so it runs only when DESKTOP_MIRROR_CAMERA_TEST is set.
 func TestCaptureDeliversFrames(t *testing.T) {
+	if runtime.GOOS == "darwin" && os.Getenv("DESKTOP_MIRROR_CAMERA_TEST") == "" {
+		t.Skip("set DESKTOP_MIRROR_CAMERA_TEST=1 to turn the Mac's camera on for this test")
+	}
 	ctx := context.Background()
 	devices, err := camera.Devices(ctx)
 	if err != nil {

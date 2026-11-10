@@ -235,10 +235,12 @@ Differences from the first draft:
 - **Certificates** cover every LAN address, so switching interface does not force the phone to accept a new one.
 - **Loss detection** on the receive side uses RTP sequence gaps (rate limited to one keyframe request per second) plus pion's periodic PLI interceptor, rather than the sample builder's release handler, which fires for normal packets too.
 
+- **macOS without FFmpeg.** On a Mac the codec is H.264 through VideoToolbox (`internal/media/vtbox`, cgo over the C API of VideoToolbox, CoreMedia and CoreVideo; frames cross it as NV12 in video range) and the camera is AVFoundation (`internal/camera/avf_darwin.go`, Objective-C in the cgo preamble: a capture session whose delegate keeps the newest frame as RGBA, which the capture goroutine takes; `Info.plist` with `NSCameraUsageDescription` is linked into the program's `__info_plist` section so that macOS can ask for the camera). `media.Codec` names the codec of the factories, `rtc.Config.Codec` registers that one codec with pion (H.264: payload type 102, `profile-level-id=42e01f`, `packetization-mode=1`) and picks the depacketizer, and `cmd/desktop-mirror` chooses per build: `darwin && cgo` is VideoToolbox and H.264, everything else is FFmpeg and VP8 (`internal/media/ffmpeg` is its stub on a Mac and without cgo). An H.264 access unit is an Annex B byte stream with the parameter sets before each keyframe (`internal/media/h264` splits it and writes the length-prefixed form that VideoToolbox takes); the decoder makes its session when the first keyframe brings the parameter sets, and gives no picture before. The V4L2 files of `internal/camera` are everything that is not `darwin && cgo`.
+
 Test coverage: unit tests for tokens, messages, certificates, interface ranking and colour conversion; a real-codec round trip (VP8 at VGA, 720p and portrait); a pion-to-pion loopback test; a session test with fakes; an end-to-end test (real HTTPS/WebSocket server, real pion peers, stub codecs) that drives the same signaling protocol as the web page; a headless test of the home page and its frame handling; V4L2 ioctl-number and colour conversion tests; and a camera test that skips without hardware.
 
 Not done yet:
 
 - Nothing has been run against a real phone browser (Chrome on Android, Safari on iOS). `web/static/app.js` is only syntax-checked and mirrored by the Go test phone.
-- Windows and macOS builds, packaging, and a signed/trusted certificate flow.
+- A Windows build, packaging, and a signed/trusted certificate flow. On macOS: the capture from a real camera and a real phone's browser against the H.264 peer were not run (the Mac of the port has no camera).
 - Congestion-controlled bitrate (fixed 1.5 Mbit/s for now) and hardware codecs.

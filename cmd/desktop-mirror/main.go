@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/rm4n0s/desktop-mirror/internal/media/ffmpeg"
 	"github.com/rm4n0s/desktop-mirror/internal/ui"
 )
 
@@ -29,8 +28,9 @@ func main() {
 		Port:           *port,
 		UDPPortMin:     uint16(*udpMin),
 		UDPPortMax:     uint16(*udpMax),
-		EncoderFactory: ffmpeg.NewEncoder,
-		DecoderFactory: ffmpeg.NewDecoder,
+		Codec:          videoCodec,
+		EncoderFactory: newEncoder,
+		DecoderFactory: newDecoder,
 	}
 	if *stun != "" {
 		cfg.STUNServers = []string{*stun}

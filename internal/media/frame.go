@@ -66,6 +66,24 @@ type Decoder interface {
 	Close() error
 }
 
+// Codec names the video codec of the access units that an Encoder makes and a Decoder takes; the WebRTC peer offers it to the
+// phone. The zero value is VP8.
+type Codec int
+
+const (
+	// CodecVP8 is VP8: an access unit is one VP8 frame.
+	CodecVP8 Codec = iota
+	// CodecH264 is H.264: an access unit is an Annex B byte stream, with the parameter sets before a keyframe.
+	CodecH264
+)
+
+func (c Codec) String() string {
+	if c == CodecH264 {
+		return "H264"
+	}
+	return "VP8"
+}
+
 // EncoderFactory creates an encoder for the given frame size and bitrate.
 type EncoderFactory func(width, height, bitrate int) (Encoder, error)
 

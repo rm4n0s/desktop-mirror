@@ -1,4 +1,4 @@
-//go:build cgo
+//go:build cgo && !darwin
 
 // Package ffmpeg implements media.Encoder and media.Decoder for VP8 on top of
 // libavcodec (cgo). Encoding needs an FFmpeg build with libvpx.

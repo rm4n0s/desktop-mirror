@@ -18,7 +18,7 @@ import (
 )
 
 // maxSendWidth caps the width of frames sent to the phone; wider camera
-// frames are shrunk so software VP8 encoding keeps up.
+// frames are shrunk so that encoding keeps up.
 const maxSendWidth = 1280
 
 // State is the pairing session state.

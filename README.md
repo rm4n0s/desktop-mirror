@@ -10,17 +10,25 @@ The app serves the phone page itself over HTTPS on your LAN, so both devices mus
 
 ## macOS
 
-The window, the HTTPS and WebSocket server for the phone page, the WebRTC peer and the QR code are pure Go and run on macOS 12 or newer, on Apple silicon and Intel (Glutter 1.16: AppKit and Metal):
+On a Mac the program needs no FFmpeg: the video is H.264 through VideoToolbox and the camera is read through AVFoundation, both part of macOS. It runs on macOS 12 or newer, on Apple silicon and Intel (Glutter 1.16: AppKit and Metal):
 
 ![Desktop Mirror on macOS](docs/screenshots/macos-glutter-1.16.png)
 
-What works on a Mac and what does not, said as it was checked:
+```sh
+go build -o desktop-mirror ./cmd/desktop-mirror
+./desktop-mirror
+```
 
-- **Build.** The video codec is FFmpeg's libvpx through cgo, so a normal build needs Xcode's command line tools, `pkg-config` and FFmpeg with libvpx (Homebrew: `brew install pkg-config ffmpeg`; its `ffmpeg` formula includes libvpx). **This was not tried:** the Mac the port was made on has neither Homebrew nor FFmpeg, so the cgo build and the codec were not run on macOS. Without cgo, `CGO_ENABLED=0 go build ./cmd/desktop-mirror` builds the rest of the program with a codec that always fails with `FFmpegUnavailable`: the window opens and shows its QR code, the phone page is served, and no video is sent or decoded. That build is what the screenshot above and the tests on the Mac ran.
-- **The PC's camera is not supported on macOS.** The camera package speaks Video4Linux2, which a Mac has not (the list says "No camera found: the phone's camera can still be viewed here"). Capture with AVFoundation is not written. So on a Mac only the phone's camera shown on the PC is meant to work, once the build has FFmpeg.
+The build needs Go 1.27 and Xcode's command line tools (`xcode-select --install`) for cgo; nothing from Homebrew.
+
+What works on a Mac, said as it was checked:
+
+- **Video codec.** `internal/media/vtbox` encodes and decodes H.264 with VideoToolbox (the Mac's hardware codec when it has one). The peer offers the phone H.264 only (constrained baseline, `packetization-mode=1`), which Safari on iOS and Chrome on Android both have. Checked on the Mac: the encoder and the decoder round trip (VGA, 720p, portrait), and two WebRTC peers exchanging H.264 over loopback through pion's packetizer. **Not checked:** a real phone's browser.
+- **The Mac's camera.** `internal/camera` lists the built-in camera, external cameras and an iPhone used as a Continuity Camera, and captures at about 1280x720. macOS asks once whether the program may use the camera. **Not checked:** the Mac the port was made on has no camera, so the listing was run (it found none) and the capture itself was not. `DESKTOP_MIRROR_CAMERA_TEST=1 go test ./internal/camera -run TestCaptureDeliversFrames -v` runs it on a Mac that has one.
+- **Without cgo** (`CGO_ENABLED=0`) the program still builds: the window, the QR code and the phone page work, the camera list is empty and no video is sent or decoded (the codec fails with `FFmpegUnavailable`).
 - **Network.** The first time the server starts, macOS asks whether the program may accept incoming connections: allow it, or the phone cannot open the page.
 
-## Install the build dependencies
+## Install the build dependencies (Linux)
 
 You need Go 1.27 or newer, a C toolchain, `pkg-config`, and FFmpeg development files (`libavcodec`, `libavutil`) from an FFmpeg built with libvpx, which provides the VP8 encoder. The UI ([glutter](https://github.com/rm4n0s/glutter)) and the camera capture (Video4Linux2) are pure Go and need no development files, but they need a Wayland or X11 session with OpenGL ES 3.0 or Vulkan at run time, and a camera that Linux exposes as `/dev/video*`.
 

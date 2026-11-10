@@ -1,4 +1,4 @@
-//go:build !cgo
+//go:build !cgo || darwin
 
 package ffmpeg_test
 

@@ -1,9 +1,11 @@
-// Package rtc wraps a pion PeerConnection that exchanges one VP8 video track
-// in each direction, hiding RTP packetization, RTCP feedback and codec use.
+// Package rtc wraps a pion PeerConnection that exchanges one video track (VP8
+// or H.264, as its Config says) in each direction, hiding RTP packetization,
+// RTCP feedback and codec use.
 package rtc
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +31,35 @@ const (
 	minPLIInterval = time.Second
 	videoClockRate = 90000
 	vp8PayloadType = 96
+	// h264PayloadType and h264Fmtp are what browsers offer for the constrained
+	// baseline profile, which every phone encodes and decodes.
+	h264PayloadType = 102
+	h264Fmtp        = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
 )
+
+// codecParameters is the one codec that a peer of the given codec registers.
+func codecParameters(c media.Codec) webrtc.RTPCodecParameters {
+	feedback := []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "ccm", Parameter: "fir"}}
+	if c == media.CodecH264 {
+		return webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: videoClockRate, SDPFmtpLine: h264Fmtp, RTCPFeedback: feedback},
+			PayloadType:        h264PayloadType,
+		}
+	}
+	return webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: videoClockRate, RTCPFeedback: feedback},
+		PayloadType:        vp8PayloadType,
+	}
+}
+
+// depacketizer makes the RTP depacketizer of the codec: the samples of H.264
+// come out as Annex B byte streams.
+func depacketizer(c media.Codec) rtp.Depacketizer {
+	if c == media.CodecH264 {
+		return &codecs.H264Packet{}
+	}
+	return &codecs.VP8Packet{}
+}
 
 // State is the coarse connection state reported to the application.
 type State int
@@ -56,6 +86,9 @@ type Config struct {
 	Bitrate                int
 	FrameRate              int
 
+	// Codec is the codec of the access units that the factories' encoders
+	// make and their decoders take; it is the only one offered to the phone.
+	Codec          media.Codec
 	EncoderFactory media.EncoderFactory
 	DecoderFactory media.DecoderFactory
 
@@ -84,7 +117,8 @@ type Peer struct {
 	closed     bool
 }
 
-// NewPeer creates the PeerConnection with a sendrecv VP8 video transceiver.
+// NewPeer creates the PeerConnection with a sendrecv video transceiver of the
+// config's codec.
 func NewPeer(cfg Config) (*Peer, error) {
 	if cfg.EncoderFactory == nil || cfg.DecoderFactory == nil {
 		return nil, errors.New("PeerConfigInvalid", "EncoderFactory and DecoderFactory are required")
@@ -96,18 +130,9 @@ func NewPeer(cfg Config) (*Peer, error) {
 		cfg.FrameRate = defaultFrameRate
 	}
 
+	codec := codecParameters(cfg.Codec)
 	me := &webrtc.MediaEngine{}
-	err := me.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeVP8,
-			ClockRate: videoClockRate,
-			RTCPFeedback: []webrtc.RTCPFeedback{
-				{Type: "nack"}, {Type: "nack", Parameter: "pli"}, {Type: "ccm", Parameter: "fir"},
-			},
-		},
-		PayloadType: vp8PayloadType,
-	}, webrtc.RTPCodecTypeVideo)
-	if err != nil {
+	if err := me.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
 		return nil, errors.NewErr("PeerCreateFailed", err)
 	}
 	ir := &interceptor.Registry{}
@@ -141,7 +166,7 @@ func NewPeer(cfg Config) (*Peer, error) {
 	}
 
 	track, err := webrtc.NewTrackLocalStaticSample(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: videoClockRate}, "video", "desktop-mirror")
+		webrtc.RTPCodecCapability{MimeType: codec.MimeType, ClockRate: videoClockRate, SDPFmtpLine: codec.SDPFmtpLine}, "video", "desktop-mirror")
 	if err != nil {
 		_ = pc.Close()
 		return nil, errors.NewErr("PeerCreateFailed", err)
@@ -354,7 +379,7 @@ func (p *Peer) readSenderRTCP(sender *webrtc.RTPSender) {
 }
 
 func (p *Peer) handleTrack(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-	if remote.Kind() != webrtc.RTPCodecTypeVideo || remote.Codec().MimeType != webrtc.MimeTypeVP8 {
+	if remote.Kind() != webrtc.RTPCodecTypeVideo || !strings.EqualFold(remote.Codec().MimeType, codecParameters(p.cfg.Codec).MimeType) {
 		return
 	}
 	go p.readRemote(remote)
@@ -369,7 +394,7 @@ func (p *Peer) readRemote(remote *webrtc.TrackRemote) {
 	}
 	defer func() { _ = dec.Close() }()
 
-	sb := samplebuilder.New(64, &codecs.VP8Packet{}, remote.Codec().ClockRate)
+	sb := samplebuilder.New(64, depacketizer(p.cfg.Codec), remote.Codec().ClockRate)
 	var lastSeq uint16
 	haveSeq := false
 	for {

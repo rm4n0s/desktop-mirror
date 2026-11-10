@@ -35,6 +35,8 @@ type Config struct {
 	UDPPortMin, UDPPortMax uint16
 	STUNServers            []string
 
+	// Codec is the codec of the factories below, which is offered to the phone.
+	Codec          media.Codec
 	EncoderFactory media.EncoderFactory
 	DecoderFactory media.DecoderFactory
 }
@@ -92,6 +94,7 @@ func (c *controller) initSession() error {
 			UDPPortMin:     c.cfg.UDPPortMin,
 			UDPPortMax:     c.cfg.UDPPortMax,
 			STUNServers:    c.cfg.STUNServers,
+			Codec:          c.cfg.Codec,
 			EncoderFactory: c.cfg.EncoderFactory,
 			DecoderFactory: c.cfg.DecoderFactory,
 		}),
