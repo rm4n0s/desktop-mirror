@@ -10,7 +10,7 @@ require (
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.22
 	github.com/rm4n0s/errors v0.2.0
-	github.com/rm4n0s/glutter v1.16.0
+	github.com/rm4n0s/glutter v1.16.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/sys v0.49.0
 )
