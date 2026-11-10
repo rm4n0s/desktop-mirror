@@ -44,8 +44,8 @@ github.com/pion/webrtc/v4 v4.2.22 h1:eoRTHzLKW5tI9o5iahw3s4KL4IHPESsfIF06zWi3JAo
 github.com/pion/webrtc/v4 v4.2.22/go.mod h1:JBu1ba8lUEX4jbYFKofglMQJG7f0rJk7UepKjI3GaLE=
 github.com/rm4n0s/errors v0.2.0 h1:IM8Ug6x0ylxcWaH1P0vl79qiTM6pJb3DTe+9lBT83+0=
 github.com/rm4n0s/errors v0.2.0/go.mod h1:i/xNeA3IMMgyVwttn7tC4nny2Vqgff18R0rKevqSx8E=
-github.com/rm4n0s/glutter v1.16.2 h1:YVdrxiWhPLZTMuDwUITErR9YjLe4hV3KI5KdazJv2zs=
-github.com/rm4n0s/glutter v1.16.2/go.mod h1:Gm2Gr6JJ9ONONzcE5+mG09gxXkPj6FbbFrvNaK9Tli0=
+github.com/rm4n0s/glutter v1.16.3 h1:Z89i0IKa6EYFXwNJOYDrO/JJJhpnyaHSfYlzyynHel8=
+github.com/rm4n0s/glutter v1.16.3/go.mod h1:Gm2Gr6JJ9ONONzcE5+mG09gxXkPj6FbbFrvNaK9Tli0=
 github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1vwZ3Je0FKVCfqOLp5zO6trqMLYs0=
 github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
