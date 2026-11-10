@@ -3,8 +3,8 @@ package ui
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -282,15 +282,7 @@ func (c *controller) showError(err error) {
 	c.update(func(vm *viewModel) { vm.err = text })
 }
 
-// logError writes the structured error (tag, metadata, stack) to stderr.
+// logError writes the structured error (tag, metadata, stack) to the log: *errors.Error is an slog.LogValuer.
 func (c *controller) logError(err error) {
-	if appErr, ok := errors.FromError(err); ok {
-		if j, jerr := appErr.ToJson(); jerr == nil {
-			if b, merr := json.Marshal(j); merr == nil {
-				log.Printf("error: %s", b)
-				return
-			}
-		}
-	}
-	log.Printf("error: %v", err)
+	slog.Error("error", "err", err)
 }

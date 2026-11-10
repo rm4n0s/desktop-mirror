@@ -58,7 +58,7 @@ Use `github.com/rm4n0s/errors` for all errors. Never use `fmt.Errorf`, and never
   }
   ```
 - A route lists the call chain from outermost to innermost (`Type.Method` or `Func`, joined by `->`) and ends with the Tag. `HasRoute` matches by substring
-- Log errors with `appErr.ToJson()` so they can be replayed in a test via `errors.FromJson`
+- Log errors with `slog`, passing the error as an attribute (`slog.Error("failed", "err", err)`): `*errors.Error` is an `slog.LogValuer` (errors v0.2.0 has no `ToJson` that returns an error)
 
 ## Git and GitHub
 - Never commit or push directly to `main`; work on a branch named `feat/...` or `fix/...`
@@ -72,6 +72,6 @@ Use `github.com/rm4n0s/errors` for all errors. Never use `fmt.Errorf`, and never
 - Don't commit secrets or `.env` files
 ## Project notes
 - Only `internal/ui` imports glutter (`github.com/rm4n0s/glutter`); keep new logic in UI-free packages so it tests without a display. Design and decisions are in `docs/SPEC.md`
-- Building needs Go 1.27 and FFmpeg dev files with libvpx (for `internal/media/ffmpeg`); glutter and `internal/camera` (V4L2) are pure Go and Linux only
+- Building needs Go 1.27 and FFmpeg dev files with libvpx (for `internal/media/ffmpeg`); glutter is pure Go and runs on Linux and macOS, `internal/camera` (V4L2) is pure Go and Linux only (a Mac lists no camera). Without cgo (`CGO_ENABLED=0`) `internal/media/ffmpeg` is a stub whose factories fail with `FFmpegUnavailable`, which lets the rest build and test on a machine with no FFmpeg (the Mac of the port had none)
 - The widget tree runs on the UI thread. `State.SetState` is safe from any goroutine; change the view model only through the `update` function the page hands its host
 - UI tests use `gluttertest` (fake platform, no display) against a fake `host`; `foundation.DebugMode` must be on, which is the default for `go test`

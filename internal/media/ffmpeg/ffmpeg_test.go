@@ -1,3 +1,5 @@
+//go:build cgo
+
 package ffmpeg_test
 
 import (
